@@ -1,0 +1,40 @@
+{
+  "name": "uniswap-v4-lp-monitor",
+  "version": "1.0.0",
+  "description": "Monitor and manage Uniswap V4 WBTC/USDC LP position",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "calculate-capital": "node scripts/calculateCapital.js",
+    "fetch-pool-data": "node scripts/fetchPoolDataDirect.js",
+    "report": "node scripts/generateReport.js",
+    "monitor": "node src/index.js --watch",
+    "lint": "eslint src scripts --fix",
+    "lint:check": "eslint src scripts",
+    "volume:24h": "./scripts/monitoring/check-volume-24h.sh",
+    "volume:7d": "./scripts/monitoring/check-volume-7d.sh",
+    "volume:30d": "./scripts/monitoring/check-volume-30d.sh",
+    "volume:track": "./scripts/monitoring/track-volume-history.sh"
+  },
+  "keywords": [
+    "uniswap",
+    "defi",
+    "liquidity",
+    "monitoring"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "ethers": "^6.13.0",
+    "dotenv": "^16.4.5",
+    "axios": "^1.7.2",
+    "node-cron": "^3.0.3"
+  },
+  "devDependencies": {
+    "eslint": "^8.57.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

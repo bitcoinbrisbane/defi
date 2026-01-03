@@ -1,0 +1,35 @@
+{
+  "pool": {
+    "token0": "WBTC",
+    "token1": "USDC",
+    "token0Address": "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599",
+    "token1Address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "feeTier": 3000,
+    "poolAddress": "0x9a772018FbD77fcD2d25657e5C547BAfF3Fd7D16",
+    "chain": "ethereum"
+  },
+  "position": {
+    "rangePercent": 15,
+    "targetWeeklyFees": 300,
+    "targetAnnualFees": 15600,
+    "nftTokenId": null
+  },
+  "monitoring": {
+    "checkIntervalSeconds": 900,
+    "alertThresholds": {
+      "priceWarningPercent": 12,
+      "priceUrgentPercent": 14
+    },
+    "enableAlerts": true
+  },
+  "rebalancing": {
+    "autoRebalance": false,
+    "minTimeHoursOutOfRange": 2,
+    "gasLimitGwei": 200
+  },
+  "reporting": {
+    "generateDailyReports": true,
+    "generateWeeklyReports": true,
+    "reportTime": "09:00"
+  }
+}
