@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
 /// @title IPositionManager Interface
 /// @notice Interface for managing Uniswap V3 concentrated liquidity positions
 interface IPositionManager {
@@ -150,6 +152,19 @@ interface IPositionManager {
     function compound(uint256 tokenId) external returns (uint128 liquidity);
 
     // View Functions
+
+    /// @notice Get token A (WBTC)
+    /// @return WBTC token interface
+    function tokenA() external view returns (IERC20);
+
+    /// @notice Get token B (USDC)
+    /// @return USDC token interface
+    function tokenB() external view returns (IERC20);
+
+    /// @notice Get contract's current token balances
+    /// @return amount0 WBTC balance in contract
+    /// @return amount1 USDC balance in contract
+    function balance() external view returns (uint256 amount0, uint256 amount1);
 
     /// @notice Get the underlying token balances for a position
     /// @param tokenId The position NFT token ID

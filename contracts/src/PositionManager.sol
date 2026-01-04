@@ -41,13 +41,28 @@ contract PositionManager is IPositionManager, IERC721Receiver, Ownable {
     AggregatorV3Interface public immutable priceFeed;
 
     // Pool configuration
-    address public immutable wbtc;
-    address public immutable usdc;
+    address private immutable wbtc;
+    address private immutable usdc;
     uint24 public immutable feeTier; // 3000 = 0.30%
 
     // Position parameters
     uint256 public currentTokenId;
     int24 public rangePercent; // 15 = ±15%
+
+    function tokenA() external view returns(IERC20) {
+        return IERC20(wbtc);
+    }
+
+    function tokenB() external view returns(IERC20) {
+        return IERC20(usdc);
+    }
+
+    function balance() external view returns(uint256, uint256) {
+        uint256 tokenABalance = IERC20(wbtc).balanceOf(address(this));
+        uint256 tokenBBalance = IERC20(usdc).balanceOf(address(this));
+
+        return (tokenABalance, tokenBBalance);
+    }
 
     constructor(
         address _positionManager,
