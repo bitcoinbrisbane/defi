@@ -166,6 +166,10 @@ interface IPositionManager {
     /// @return amount1 USDC balance in contract
     function balance() external view returns (uint256 amount0, uint256 amount1);
 
+    /// @notice Get the pool name
+    /// @return Pool name in format "Pool {tokenA.name} {tokenB.name}"
+    function name() external view returns (string memory);
+
     /// @notice Get the underlying token balances for a position
     /// @param tokenId The position NFT token ID
     /// @return amount0 Amount of token0 (WBTC) in the position

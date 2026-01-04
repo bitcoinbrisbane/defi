@@ -4,32 +4,9 @@ pragma solidity ^0.8.19;
 import "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import "./IPositionManager.sol";
-
-/// @title Chainlink Price Feed Interface
-interface AggregatorV3Interface {
-    function latestRoundData() external view returns (
-        uint80 roundId,
-        int256 answer,
-        uint256 startedAt,
-        uint256 updatedAt,
-        uint80 answeredInRound
-    );
-    function decimals() external view returns (uint8);
-}
-
-/// @title Uniswap V3 Pool Interface (minimal)
-interface IUniswapV3Pool {
-    function slot0() external view returns (
-        uint160 sqrtPriceX96,
-        int24 tick,
-        uint16 observationIndex,
-        uint16 observationCardinality,
-        uint16 observationCardinalityNext,
-        uint8 feeProtocol,
-        bool unlocked
-    );
-}
+import "./IUniswap.sol";
 
 /// @title Uniswap V3 Position Manager for WBTC/USDC
 /// @notice Manages concentrated liquidity positions with automated rebalancing
@@ -44,6 +21,7 @@ contract PositionManager is IPositionManager, IERC721Receiver, Ownable {
     address private immutable wbtc;
     address private immutable usdc;
     uint24 public immutable feeTier; // 3000 = 0.30%
+    address private immutable _self;
 
     // Position parameters
     uint256 public currentTokenId;
@@ -58,10 +36,19 @@ contract PositionManager is IPositionManager, IERC721Receiver, Ownable {
     }
 
     function balance() external view returns(uint256, uint256) {
-        uint256 tokenABalance = IERC20(wbtc).balanceOf(address(this));
-        uint256 tokenBBalance = IERC20(usdc).balanceOf(address(this));
+        uint256 tokenABalance = IERC20(wbtc).balanceOf(_self);
+        uint256 tokenBBalance = IERC20(usdc).balanceOf(_self);
 
         return (tokenABalance, tokenBBalance);
+    }
+
+    function name() external view returns(string memory) {
+        // Get token names from ERC20 metadata
+        string memory tokenAName = IERC20Metadata(wbtc).name();
+        string memory tokenBName = IERC20Metadata(usdc).name();
+
+        // Concatenate: "Pool " + tokenA.name + " " + tokenB.name
+        return string(abi.encodePacked("Pool ", tokenAName, " ", tokenBName));
     }
 
     constructor(
@@ -80,6 +67,7 @@ contract PositionManager is IPositionManager, IERC721Receiver, Ownable {
         usdc = _usdc;
         feeTier = _feeTier;
         rangePercent = _rangePercent;
+        _self = address(this);
     }
 
     /// @notice Create a new concentrated liquidity position
@@ -103,8 +91,8 @@ contract PositionManager is IPositionManager, IERC721Receiver, Ownable {
         uint256 amount1
     ) {
         // Transfer tokens from sender
-        IERC20(wbtc).transferFrom(msg.sender, address(this), amount0Desired);
-        IERC20(usdc).transferFrom(msg.sender, address(this), amount1Desired);
+        IERC20(wbtc).transferFrom(msg.sender, _self, amount0Desired);
+        IERC20(usdc).transferFrom(msg.sender, _self, amount1Desired);
 
         // Approve position manager
         IERC20(wbtc).approve(address(positionManager), amount0Desired);
@@ -121,7 +109,7 @@ contract PositionManager is IPositionManager, IERC721Receiver, Ownable {
             amount1Desired: amount1Desired,
             amount0Min: 0,
             amount1Min: 0,
-            recipient: address(this),
+            recipient: _self,
             deadline: block.timestamp
         });
 
@@ -153,8 +141,8 @@ contract PositionManager is IPositionManager, IERC721Receiver, Ownable {
         (int24 tickLower, int24 tickUpper) = calculateTickRange(currentTick);
 
         // Get 100% of contract's token balances
-        uint256 wbtcBalance = IERC20(wbtc).balanceOf(address(this));
-        uint256 usdcBalance = IERC20(usdc).balanceOf(address(this));
+        uint256 wbtcBalance = IERC20(wbtc).balanceOf(_self);
+        uint256 usdcBalance = IERC20(usdc).balanceOf(_self);
 
         require(wbtcBalance > 0 || usdcBalance > 0, "No tokens in contract");
 
@@ -177,7 +165,7 @@ contract PositionManager is IPositionManager, IERC721Receiver, Ownable {
             amount1Desired: usdcBalance,
             amount0Min: 0,
             amount1Min: 0,
-            recipient: address(this),
+            recipient: _self,
             deadline: block.timestamp
         });
 
@@ -212,8 +200,8 @@ contract PositionManager is IPositionManager, IERC721Receiver, Ownable {
         uint256 amount1
     ) {
         // Get 100% of contract's token balances
-        uint256 wbtcBalance = IERC20(wbtc).balanceOf(address(this));
-        uint256 usdcBalance = IERC20(usdc).balanceOf(address(this));
+        uint256 wbtcBalance = IERC20(wbtc).balanceOf(_self);
+        uint256 usdcBalance = IERC20(usdc).balanceOf(_self);
 
         require(wbtcBalance > 0 || usdcBalance > 0, "No tokens in contract");
 
@@ -257,7 +245,7 @@ contract PositionManager is IPositionManager, IERC721Receiver, Ownable {
             amount1Desired: amount1Desired,
             amount0Min: 0,
             amount1Min: 0,
-            recipient: address(this),
+            recipient: _self,
             deadline: block.timestamp
         });
 
@@ -307,8 +295,8 @@ contract PositionManager is IPositionManager, IERC721Receiver, Ownable {
         }
 
         // Get contract balances after fee collection
-        withdrawnAmount0 = IERC20(wbtc).balanceOf(address(this));
-        withdrawnAmount1 = IERC20(usdc).balanceOf(address(this));
+        withdrawnAmount0 = IERC20(wbtc).balanceOf(_self);
+        withdrawnAmount1 = IERC20(usdc).balanceOf(_self);
 
         // Transfer all WBTC to owner
         if (withdrawnAmount0 > 0) {
@@ -428,7 +416,7 @@ contract PositionManager is IPositionManager, IERC721Receiver, Ownable {
     /// @notice Emergency withdraw tokens
     /// @param token Token address to withdraw
     function emergencyWithdraw(address token) external onlyOwner {
-        uint256 balance = IERC20(token).balanceOf(address(this));
+        uint256 balance = IERC20(token).balanceOf(_self);
         require(balance > 0, "No tokens to withdraw");
         IERC20(token).transfer(owner(), balance);
         emit EmergencyWithdrawal(token, balance);
@@ -474,70 +462,4 @@ contract PositionManager is IPositionManager, IERC721Receiver, Ownable {
     ) external pure override returns (bytes4) {
         return this.onERC721Received.selector;
     }
-}
-
-// Minimal interfaces for Uniswap V3
-interface INonfungiblePositionManager {
-    struct MintParams {
-        address token0;
-        address token1;
-        uint24 fee;
-        int24 tickLower;
-        int24 tickUpper;
-        uint256 amount0Desired;
-        uint256 amount1Desired;
-        uint256 amount0Min;
-        uint256 amount1Min;
-        address recipient;
-        uint256 deadline;
-    }
-
-    struct CollectParams {
-        uint256 tokenId;
-        address recipient;
-        uint128 amount0Max;
-        uint128 amount1Max;
-    }
-
-    struct DecreaseLiquidityParams {
-        uint256 tokenId;
-        uint128 liquidity;
-        uint256 amount0Min;
-        uint256 amount1Min;
-        uint256 deadline;
-    }
-
-    function mint(MintParams calldata params) external payable returns (
-        uint256 tokenId,
-        uint128 liquidity,
-        uint256 amount0,
-        uint256 amount1
-    );
-
-    function collect(CollectParams calldata params) external payable returns (
-        uint256 amount0,
-        uint256 amount1
-    );
-
-    function decreaseLiquidity(DecreaseLiquidityParams calldata params) external payable returns (
-        uint256 amount0,
-        uint256 amount1
-    );
-
-    function burn(uint256 tokenId) external payable;
-
-    function positions(uint256 tokenId) external view returns (
-        uint96 nonce,
-        address operator,
-        address token0,
-        address token1,
-        uint24 fee,
-        int24 tickLower,
-        int24 tickUpper,
-        uint128 liquidity,
-        uint256 feeGrowthInside0LastX128,
-        uint256 feeGrowthInside1LastX128,
-        uint128 tokensOwed0,
-        uint128 tokensOwed1
-    );
 }
