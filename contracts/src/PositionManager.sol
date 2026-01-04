@@ -5,13 +5,14 @@ import "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "./IPositionManager.sol";
 import "./IUniswap.sol";
 
 /// @title Uniswap V3 Position Manager for WBTC/USDC
 /// @notice Manages concentrated liquidity positions with automated rebalancing
 /// @dev Interacts with Uniswap V3 NonfungiblePositionManager
-contract PositionManager is IPositionManager, IERC721Receiver, Ownable {
+contract PositionManager is IPositionManager, IERC721Receiver, Ownable, ReentrancyGuard {
     // Uniswap V3 interfaces
     INonfungiblePositionManager public immutable positionManager;
     IUniswapV3Pool public immutable pool;
@@ -26,6 +27,25 @@ contract PositionManager is IPositionManager, IERC721Receiver, Ownable {
     // Position parameters
     uint256 public currentTokenId;
     int24 public rangePercent; // 15 = ±15%
+
+    // Chainlink configuration
+    uint256 public constant PRICE_STALENESS_THRESHOLD = 3600; // 1 hour in seconds
+
+    /// @notice Get validated WBTC price from Chainlink with staleness check
+    /// @dev Reverts if price is stale (>1 hour old) or invalid
+    /// @return price WBTC price in USDC terms (6 decimals)
+    function _getValidatedWBTCPrice() internal view returns (uint256 price) {
+        (, int256 answer, , uint256 updatedAt, ) = priceFeed.latestRoundData();
+
+        // Check price staleness
+        require(block.timestamp - updatedAt <= PRICE_STALENESS_THRESHOLD, "Chainlink price too stale");
+
+        // Check price validity
+        require(answer > 0, "Invalid Chainlink price");
+
+        // Convert from 8 decimals (Chainlink) to 6 decimals (USDC)
+        price = uint256(answer) * 1e6 / 1e8;
+    }
 
     function tokenA() external view returns(IERC20) {
         return IERC20(wbtc);
@@ -84,7 +104,7 @@ contract PositionManager is IPositionManager, IERC721Receiver, Ownable {
         uint256 amount1Desired,
         int24 tickLower,
         int24 tickUpper
-    ) external onlyOwner returns (
+    ) external onlyOwner nonReentrant returns (
         uint256 tokenId,
         uint128 liquidity,
         uint256 amount0,
@@ -128,7 +148,7 @@ contract PositionManager is IPositionManager, IERC721Receiver, Ownable {
     /// @return liquidity The amount of liquidity added
     /// @return amount0 Actual amount of token0 added
     /// @return amount1 Actual amount of token1 added
-    function addLiquidityFromContract() external onlyOwner returns (
+    function addLiquidityFromContract() external onlyOwner nonReentrant returns (
         uint256 tokenId,
         uint128 liquidity,
         uint256 amount0,
@@ -193,7 +213,7 @@ contract PositionManager is IPositionManager, IERC721Receiver, Ownable {
         uint256 wbtcPrice,
         int24 tickLower,
         int24 tickUpper
-    ) external onlyOwner returns (
+    ) external onlyOwner nonReentrant returns (
         uint256 tokenId,
         uint128 liquidity,
         uint256 amount0,
@@ -283,7 +303,7 @@ contract PositionManager is IPositionManager, IERC721Receiver, Ownable {
     /// @return feesAmount1 Amount of USDC fees collected from position
     /// @return withdrawnAmount0 Total amount of WBTC withdrawn to owner
     /// @return withdrawnAmount1 Total amount of USDC withdrawn to owner
-    function collectFeesAndWithdraw() external onlyOwner returns (
+    function collectFeesAndWithdraw() external onlyOwner nonReentrant returns (
         uint256 feesAmount0,
         uint256 feesAmount1,
         uint256 withdrawnAmount0,
@@ -313,22 +333,21 @@ contract PositionManager is IPositionManager, IERC721Receiver, Ownable {
         emit EmergencyWithdrawal(usdc, withdrawnAmount1);
     }
 
-    /// @notice Close existing position and create a new one at current price
-    /// @dev Automatically fetches current tick from pool and calculates range
-    /// @return newTokenId The new position NFT token ID
-    function rebalance() external onlyOwner returns (uint256 newTokenId) {
-        uint256 oldTokenId = currentTokenId;
-        require(oldTokenId != 0, "No active position");
+    /// @notice Close the current position and withdraw collateral to contract
+    /// @dev Collects fees, decreases liquidity to 0, collects tokens, burns NFT
+    /// @return amount0 Amount of token0 (WBTC) withdrawn to contract
+    /// @return amount1 Amount of token1 (USDC) withdrawn to contract
+    function closePosition() external onlyOwner nonReentrant returns (uint256 amount0, uint256 amount1) {
+        uint256 tokenId = currentTokenId;
+        require(tokenId != 0, "No active position");
 
-        // Collect fees first
-        collectFees(oldTokenId);
+        // Get position info
+        PositionInfo memory posInfo = getPositionInfo(tokenId);
 
         // Decrease liquidity to 0 (withdraw all)
-        PositionInfo memory posInfo = getPositionInfo(oldTokenId);
-
         INonfungiblePositionManager.DecreaseLiquidityParams memory decreaseParams =
             INonfungiblePositionManager.DecreaseLiquidityParams({
-                tokenId: oldTokenId,
+                tokenId: tokenId,
                 liquidity: posInfo.liquidity,
                 amount0Min: 0,
                 amount1Min: 0,
@@ -337,11 +356,34 @@ contract PositionManager is IPositionManager, IERC721Receiver, Ownable {
 
         positionManager.decreaseLiquidity(decreaseParams);
 
-        // Collect withdrawn liquidity
-        (uint256 amount0, uint256 amount1) = collectFees(oldTokenId);
+        // Collect all tokens (fees + withdrawn liquidity) to contract
+        INonfungiblePositionManager.CollectParams memory collectParams = INonfungiblePositionManager.CollectParams({
+            tokenId: tokenId,
+            recipient: _self,
+            amount0Max: type(uint128).max,
+            amount1Max: type(uint128).max
+        });
 
-        // Burn old NFT
-        positionManager.burn(oldTokenId);
+        (amount0, amount1) = positionManager.collect(collectParams);
+
+        // Burn the NFT
+        positionManager.burn(tokenId);
+
+        // Clear current token ID
+        currentTokenId = 0;
+
+        emit PositionClosed(tokenId, amount0, amount1);
+    }
+
+    /// @notice Close existing position and create a new one at current price
+    /// @dev Automatically fetches current tick from pool and calculates range
+    /// @return newTokenId The new position NFT token ID
+    function rebalance() external onlyOwner nonReentrant returns (uint256 newTokenId) {
+        uint256 oldTokenId = currentTokenId;
+        require(oldTokenId != 0, "No active position");
+
+        // Close position and get withdrawn amounts
+        (uint256 amount0, uint256 amount1) = this.closePosition();
 
         // Get current tick from the pool
         (, int24 currentTick, , , , , ) = pool.slot0();
@@ -415,14 +457,43 @@ contract PositionManager is IPositionManager, IERC721Receiver, Ownable {
         emit RangeUpdated(newRangePercent);
     }
 
-    /// @notice Emergency withdraw tokens
-    /// @param token Token address to withdraw
-    function emergencyWithdraw(address token) external onlyOwner {
-        uint256 balance = IERC20(token).balanceOf(_self);
-        require(balance > 0, "No tokens to withdraw");
-        IERC20(token).transfer(owner(), balance);
-        emit EmergencyWithdrawal(token, balance);
+    /// @notice Emergency withdraw all tokens and ETH
+    /// @return ethAmount Amount of ETH withdrawn
+    /// @return amount0 Amount of token0 (WBTC) withdrawn
+    /// @return amount1 Amount of token1 (USDC) withdrawn
+    function emergencyWithdraw() external onlyOwner nonReentrant returns (
+        uint256 ethAmount,
+        uint256 amount0,
+        uint256 amount1
+    ) {
+        // Sweep ETH if balance exists
+        ethAmount = _self.balance;
+        if (ethAmount > 0) {
+            (bool success, ) = owner().call{value: ethAmount}("");
+            require(success, "ETH transfer failed");
+            emit EmergencyWithdrawal(address(0), ethAmount);
+        }
+
+        // Withdraw WBTC (token0)
+        amount0 = IERC20(wbtc).balanceOf(_self);
+        if (amount0 > 0) {
+            IERC20(wbtc).transfer(owner(), amount0);
+            emit EmergencyWithdrawal(wbtc, amount0);
+        }
+
+        // Withdraw USDC (token1)
+        amount1 = IERC20(usdc).balanceOf(_self);
+        if (amount1 > 0) {
+            IERC20(usdc).transfer(owner(), amount1);
+            emit EmergencyWithdrawal(usdc, amount1);
+        }
+
+        // Require at least one asset was withdrawn
+        require(ethAmount > 0 || amount0 > 0 || amount1 > 0, "No assets to withdraw");
     }
+
+    /// @notice Allow contract to receive ETH
+    receive() external payable {}
 
     // Stub implementations for interface methods (to be implemented)
 
@@ -438,16 +509,52 @@ contract PositionManager is IPositionManager, IERC721Receiver, Ownable {
     }
 
     /// @notice Compound accumulated fees back into the position
-    /// @dev Not yet implemented
-    function compound(uint256) external pure returns (uint128) {
-        revert("Not implemented");
+    /// @dev Collects fees and adds them as new liquidity using addLiquidityFromContractPrioritized
+    /// @return tokenId The NFT token ID of the new position created from fees
+    /// @return liquidity The amount of liquidity added from fees
+    /// @return amount0 Actual amount of token0 (WBTC) added
+    /// @return amount1 Actual amount of token1 (USDC) added
+    function compound() external nonReentrant returns (
+        uint256 tokenId,
+        uint128 liquidity,
+        uint256 amount0,
+        uint256 amount1
+    ) {
+        require(currentTokenId != 0, "No active position");
+
+        // Collect fees from current position to contract
+        INonfungiblePositionManager.CollectParams memory collectParams = INonfungiblePositionManager.CollectParams({
+            tokenId: currentTokenId,
+            recipient: _self,
+            amount0Max: type(uint128).max,
+            amount1Max: type(uint128).max
+        });
+
+        (uint256 feesCollected0, uint256 feesCollected1) = positionManager.collect(collectParams);
+
+        require(feesCollected0 > 0 || feesCollected1 > 0, "No fees to compound");
+
+        emit FeesCollected(currentTokenId, feesCollected0, feesCollected1);
+
+        // Get current WBTC price for prioritization (with staleness check)
+        uint256 wbtcPrice = _getValidatedWBTCPrice();
+
+        // Get current tick from the pool
+        (, int24 currentTick, , , , , ) = pool.slot0();
+
+        // Calculate tick range
+        (int24 tickLower, int24 tickUpper) = calculateTickRange(currentTick);
+
+        // Add all collected fees as new liquidity using prioritized strategy
+        (tokenId, liquidity, amount0, amount1) = this.addLiquidityFromContractPrioritized(
+            wbtcPrice,
+            tickLower,
+            tickUpper
+        );
+
+        emit FeesCompounded(tokenId, amount0, amount1);
     }
 
-    /// @notice Get the underlying token balances for a position
-    /// @dev Not yet implemented
-    function underlying(uint256) external pure returns (uint256, uint256) {
-        revert("Not implemented");
-    }
 
     /// @notice Get information about all pools managed by this contract
     /// @dev Not yet implemented

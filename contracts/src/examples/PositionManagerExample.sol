@@ -37,16 +37,13 @@ contract PositionManagerExample {
     }
 
     /// @notice Example: Compound fees
-    function exampleCompound(uint256 tokenId) external returns (uint128 liquidity) {
-        liquidity = positionManager.compound(tokenId);
-    }
-
-    /// @notice Example: Get underlying balances
-    function exampleGetUnderlying(uint256 tokenId) external view returns (
+    function exampleCompound() external returns (
+        uint256 tokenId,
+        uint128 liquidity,
         uint256 amount0,
         uint256 amount1
     ) {
-        (amount0, amount1) = positionManager.underlying(tokenId);
+        (tokenId, liquidity, amount0, amount1) = positionManager.compound();
     }
 
     /// @notice Example: Get all pools

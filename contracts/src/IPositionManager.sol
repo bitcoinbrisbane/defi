@@ -34,6 +34,7 @@ interface IPositionManager {
     // Events
     event LiquidityAdded(uint256 indexed tokenId, uint128 liquidity, uint256 amount0, uint256 amount1);
     event PositionCreated(uint256 indexed tokenId, uint128 liquidity, uint256 amount0, uint256 amount1);
+    event PositionClosed(uint256 indexed tokenId, uint256 amount0, uint256 amount1);
     event PositionRebalanced(uint256 indexed oldTokenId, uint256 indexed newTokenId);
     event FeesCollected(uint256 indexed tokenId, uint256 amount0, uint256 amount1);
     event FeesCompounded(uint256 indexed tokenId, uint256 amount0, uint256 amount1);
@@ -137,15 +138,29 @@ interface IPositionManager {
         uint256 withdrawnAmount1
     );
 
+    /// @notice Close the current position and withdraw collateral to contract
+    /// @dev Collects fees, decreases liquidity to 0, collects tokens, burns NFT
+    /// @return amount0 Amount of token0 (WBTC) withdrawn to contract
+    /// @return amount1 Amount of token1 (USDC) withdrawn to contract
+    function closePosition() external returns (uint256 amount0, uint256 amount1);
+
     /// @notice Rebalance position when price moves out of range
     /// @dev Automatically fetches current tick from pool and calculates range
     /// @return newTokenId The new position NFT token ID
     function rebalance() external returns (uint256 newTokenId);
 
     /// @notice Compound accumulated fees back into the position
-    /// @param tokenId The position NFT token ID to compound
+    /// @dev Collects fees and adds them as new liquidity
+    /// @return tokenId The NFT token ID of the new position created from fees
     /// @return liquidity Amount of new liquidity added from fees
-    function compound(uint256 tokenId) external returns (uint128 liquidity);
+    /// @return amount0 Actual amount of token0 (WBTC) added
+    /// @return amount1 Actual amount of token1 (USDC) added
+    function compound() external returns (
+        uint256 tokenId,
+        uint128 liquidity,
+        uint256 amount0,
+        uint256 amount1
+    );
 
     // View Functions
 
@@ -166,14 +181,6 @@ interface IPositionManager {
     /// @return Pool name in format "Pool {tokenA.name} {tokenB.name}"
     function name() external view returns (string memory);
 
-    /// @notice Get the underlying token balances for a position
-    /// @param tokenId The position NFT token ID
-    /// @return amount0 Amount of token0 (WBTC) in the position
-    /// @return amount1 Amount of token1 (USDC) in the position
-    function underlying(uint256 tokenId) external view returns (
-        uint256 amount0,
-        uint256 amount1
-    );
 
     /// @notice Get detailed information about a position
     /// @param tokenId The position NFT token ID
@@ -196,7 +203,13 @@ interface IPositionManager {
     /// @param newRangePercent New range (e.g., 15 for ±15%)
     function updateRange(int24 newRangePercent) external;
 
-    /// @notice Emergency withdraw tokens from the contract
-    /// @param token Token address to withdraw (use address(0) for ETH)
-    function emergencyWithdraw(address token) external;
+    /// @notice Emergency withdraw all tokens and ETH from the contract
+    /// @return ethAmount Amount of ETH withdrawn
+    /// @return amount0 Amount of token0 (WBTC) withdrawn
+    /// @return amount1 Amount of token1 (USDC) withdrawn
+    function emergencyWithdraw() external returns (
+        uint256 ethAmount,
+        uint256 amount0,
+        uint256 amount1
+    );
 }

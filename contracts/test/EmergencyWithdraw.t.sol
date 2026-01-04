@@ -52,15 +52,18 @@ contract EmergencyWithdrawTest is Test {
 
         uint256 ownerBalanceBefore = owner.balance;
 
-        // Withdraw ETH
+        // Withdraw all assets
         vm.expectEmit(true, true, true, true);
         emit EmergencyWithdrawal(address(0), ethAmount);
 
-        manager.emergencyWithdraw(address(0));
+        (uint256 ethWithdrawn, uint256 wbtcWithdrawn, uint256 usdcWithdrawn) = manager.emergencyWithdraw();
 
         // Verify balances
         assertEq(address(manager).balance, 0, "Contract should have no ETH");
         assertEq(owner.balance, ownerBalanceBefore + ethAmount, "Owner should receive ETH");
+        assertEq(ethWithdrawn, ethAmount, "Should return ETH amount");
+        assertEq(wbtcWithdrawn, 0, "No WBTC to withdraw");
+        assertEq(usdcWithdrawn, 0, "No USDC to withdraw");
     }
 
     function testEmergencyWithdrawERC20() public {
@@ -75,11 +78,11 @@ contract EmergencyWithdrawTest is Test {
 
         uint256 ownerBalanceBefore = IERC20(USDC).balanceOf(owner);
 
-        // Withdraw USDC
+        // Withdraw all assets
         vm.expectEmit(true, true, true, true);
         emit EmergencyWithdrawal(USDC, usdcAmount);
 
-        manager.emergencyWithdraw(USDC);
+        (uint256 ethWithdrawn, uint256 wbtcWithdrawn, uint256 usdcWithdrawn) = manager.emergencyWithdraw();
 
         // Verify balances
         assertEq(IERC20(USDC).balanceOf(address(manager)), 0, "Contract should have no USDC");
@@ -88,6 +91,9 @@ contract EmergencyWithdrawTest is Test {
             ownerBalanceBefore + usdcAmount,
             "Owner should receive USDC"
         );
+        assertEq(ethWithdrawn, 0, "No ETH to withdraw");
+        assertEq(wbtcWithdrawn, 0, "No WBTC to withdraw");
+        assertEq(usdcWithdrawn, usdcAmount, "Should return USDC amount");
     }
 
     function testEmergencyWithdrawWBTC() public {
@@ -102,11 +108,11 @@ contract EmergencyWithdrawTest is Test {
 
         uint256 ownerBalanceBefore = IERC20(WBTC).balanceOf(owner);
 
-        // Withdraw WBTC
+        // Withdraw all assets
         vm.expectEmit(true, true, true, true);
         emit EmergencyWithdrawal(WBTC, wbtcAmount);
 
-        manager.emergencyWithdraw(WBTC);
+        (uint256 ethWithdrawn, uint256 wbtcWithdrawn, uint256 usdcWithdrawn) = manager.emergencyWithdraw();
 
         // Verify balances
         assertEq(IERC20(WBTC).balanceOf(address(manager)), 0, "Contract should have no WBTC");
@@ -115,6 +121,9 @@ contract EmergencyWithdrawTest is Test {
             ownerBalanceBefore + wbtcAmount,
             "Owner should receive WBTC"
         );
+        assertEq(ethWithdrawn, 0, "No ETH to withdraw");
+        assertEq(wbtcWithdrawn, wbtcAmount, "Should return WBTC amount");
+        assertEq(usdcWithdrawn, 0, "No USDC to withdraw");
     }
 
     function testEmergencyWithdrawRevertsIfNotOwner() public {
@@ -124,31 +133,27 @@ contract EmergencyWithdrawTest is Test {
         // Try to withdraw as non-owner
         vm.prank(nonOwner);
         vm.expectRevert();
-        manager.emergencyWithdraw(address(0));
+        manager.emergencyWithdraw();
     }
 
-    function testEmergencyWithdrawRevertsIfNoETH() public {
-        // Ensure no ETH in contract
+    function testEmergencyWithdrawRevertsIfNoAssets() public {
+        // Ensure no assets in contract
         assertEq(address(manager).balance, 0);
-
-        // Try to withdraw
-        vm.expectRevert("No ETH to withdraw");
-        manager.emergencyWithdraw(address(0));
-    }
-
-    function testEmergencyWithdrawRevertsIfNoTokens() public {
-        // Ensure no USDC in contract
+        assertEq(IERC20(WBTC).balanceOf(address(manager)), 0);
         assertEq(IERC20(USDC).balanceOf(address(manager)), 0);
 
         // Try to withdraw
-        vm.expectRevert("No tokens to withdraw");
-        manager.emergencyWithdraw(USDC);
+        vm.expectRevert("No assets to withdraw");
+        manager.emergencyWithdraw();
     }
 
     function testEmergencyWithdrawMultipleTokens() public {
         // Send multiple tokens to contract
+        uint256 ethAmount = 2 ether;
         uint256 usdcAmount = 5000 * 1e6; // 5,000 USDC
         uint256 wbtcAmount = 0.5 * 1e8; // 0.5 WBTC
+
+        vm.deal(address(manager), ethAmount);
 
         vm.prank(USDC_WHALE);
         IERC20(USDC).transfer(address(manager), usdcAmount);
@@ -156,15 +161,20 @@ contract EmergencyWithdrawTest is Test {
         vm.prank(WBTC_WHALE);
         IERC20(WBTC).transfer(address(manager), wbtcAmount);
 
-        // Withdraw USDC
-        manager.emergencyWithdraw(USDC);
-        assertEq(IERC20(USDC).balanceOf(address(manager)), 0);
-        assertEq(IERC20(USDC).balanceOf(owner), usdcAmount);
+        // Withdraw all assets at once
+        (uint256 ethWithdrawn, uint256 wbtcWithdrawn, uint256 usdcWithdrawn) = manager.emergencyWithdraw();
 
-        // Withdraw WBTC
-        manager.emergencyWithdraw(WBTC);
-        assertEq(IERC20(WBTC).balanceOf(address(manager)), 0);
-        assertEq(IERC20(WBTC).balanceOf(owner), wbtcAmount);
+        // Verify all assets withdrawn
+        assertEq(address(manager).balance, 0, "Contract should have no ETH");
+        assertEq(IERC20(USDC).balanceOf(address(manager)), 0, "Contract should have no USDC");
+        assertEq(IERC20(WBTC).balanceOf(address(manager)), 0, "Contract should have no WBTC");
+
+        assertEq(ethWithdrawn, ethAmount, "Should return ETH amount");
+        assertEq(wbtcWithdrawn, wbtcAmount, "Should return WBTC amount");
+        assertEq(usdcWithdrawn, usdcAmount, "Should return USDC amount");
+
+        assertEq(IERC20(USDC).balanceOf(owner), usdcAmount, "Owner should receive USDC");
+        assertEq(IERC20(WBTC).balanceOf(owner), wbtcAmount, "Owner should receive WBTC");
     }
 
     function testEmergencyWithdrawEmitsEvent() public {
@@ -175,7 +185,7 @@ contract EmergencyWithdrawTest is Test {
         vm.expectEmit(true, true, true, true);
         emit EmergencyWithdrawal(address(0), ethAmount);
 
-        manager.emergencyWithdraw(address(0));
+        manager.emergencyWithdraw();
     }
 
     // Fuzz test: withdraw varying amounts of ETH
@@ -185,10 +195,11 @@ contract EmergencyWithdrawTest is Test {
         vm.deal(address(manager), amount);
 
         uint256 ownerBalanceBefore = owner.balance;
-        manager.emergencyWithdraw(address(0));
+        (uint256 ethWithdrawn, , ) = manager.emergencyWithdraw();
 
         assertEq(address(manager).balance, 0);
         assertEq(owner.balance, ownerBalanceBefore + amount);
+        assertEq(ethWithdrawn, amount);
     }
 
     // Test that contract can receive ETH (via receive function)
