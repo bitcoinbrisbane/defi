@@ -84,16 +84,12 @@ interface IPositionManager {
 
     /// @notice Add liquidity using contract's own token balance
     /// @dev Uses 100% of available WBTC and USDC in the contract
-    /// @param tickLower Lower tick of the range
-    /// @param tickUpper Upper tick of the range
+    /// @dev Automatically fetches current tick from pool and calculates range
     /// @return tokenId The NFT token ID of the position
     /// @return liquidity The amount of liquidity added
     /// @return amount0 Actual amount of token0 added
     /// @return amount1 Actual amount of token1 added
-    function addLiquidityFromContract(
-        int24 tickLower,
-        int24 tickUpper
-    ) external returns (
+    function addLiquidityFromContract() external returns (
         uint256 tokenId,
         uint128 liquidity,
         uint256 amount0,
@@ -125,6 +121,19 @@ interface IPositionManager {
     /// @return amount0 Amount of token0 fees collected
     /// @return amount1 Amount of token1 fees collected
     function collectFees(uint256 tokenId) external returns (uint256 amount0, uint256 amount1);
+
+    /// @notice Collect all fees and withdraw all tokens from contract to owner
+    /// @dev Collects fees from current position, then withdraws all WBTC and USDC in contract
+    /// @return feesAmount0 Amount of WBTC fees collected from position
+    /// @return feesAmount1 Amount of USDC fees collected from position
+    /// @return withdrawnAmount0 Total amount of WBTC withdrawn to owner
+    /// @return withdrawnAmount1 Total amount of USDC withdrawn to owner
+    function collectFeesAndWithdraw() external returns (
+        uint256 feesAmount0,
+        uint256 feesAmount1,
+        uint256 withdrawnAmount0,
+        uint256 withdrawnAmount1
+    );
 
     /// @notice Rebalance position when price moves out of range
     /// @param newTickLower Lower tick for new position
