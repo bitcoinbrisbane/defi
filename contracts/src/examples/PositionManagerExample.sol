@@ -1,0 +1,64 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "../IPositionManager.sol";
+
+/// @title Position Manager Example
+/// @notice Example contract showing how to interact with PositionManager via interface
+/// @dev This demonstrates the abstraction provided by IPositionManager
+contract PositionManagerExample {
+    IPositionManager public positionManager;
+
+    constructor(address _positionManager) {
+        positionManager = IPositionManager(_positionManager);
+    }
+
+    /// @notice Example: Add liquidity using the interface
+    function exampleAddLiquidity(
+        uint256 amount0,
+        uint256 amount1,
+        int24 tickLower,
+        int24 tickUpper
+    ) external returns (uint256 tokenId) {
+        // The caller would interact through the abstracted interface
+        // without needing to know implementation details
+        (tokenId, , , ) = positionManager.addLiquidity(
+            amount0,
+            amount1,
+            tickLower,
+            tickUpper
+        );
+    }
+
+    /// @notice Example: Rebalance a position
+    function exampleRebalance(int24 currentTick) external returns (uint256 newTokenId) {
+        // Calculate new tick range using the interface
+        (int24 newTickLower, int24 newTickUpper) = positionManager.calculateTickRange(currentTick);
+
+        // Rebalance through the interface
+        newTokenId = positionManager.rebalance(newTickLower, newTickUpper);
+    }
+
+    /// @notice Example: Compound fees
+    function exampleCompound(uint256 tokenId) external returns (uint128 liquidity) {
+        liquidity = positionManager.compound(tokenId);
+    }
+
+    /// @notice Example: Get underlying balances
+    function exampleGetUnderlying(uint256 tokenId) external view returns (
+        uint256 amount0,
+        uint256 amount1
+    ) {
+        (amount0, amount1) = positionManager.underlying(tokenId);
+    }
+
+    /// @notice Example: Get all pools
+    function exampleGetPools() external view returns (IPositionManager.PoolInfo[] memory) {
+        return positionManager.getPools();
+    }
+
+    /// @notice Example: Update range percentage
+    function exampleUpdateRange(int24 newRange) external {
+        positionManager.updateRange(newRange);
+    }
+}

@@ -116,6 +116,63 @@ contract PositionManager is IERC721Receiver, Ownable {
         emit PositionCreated(tokenId, liquidity, amount0, amount1);
     }
 
+    /// @notice Add liquidity using contract's own token balance
+    /// @dev Uses 100% of available WBTC and USDC in the contract
+    /// @param tickLower Lower tick of the range
+    /// @param tickUpper Upper tick of the range
+    /// @return tokenId The NFT token ID of the position
+    /// @return liquidity The amount of liquidity added
+    /// @return amount0 Actual amount of token0 added
+    /// @return amount1 Actual amount of token1 added
+    function addLiquidityFromContract(
+        int24 tickLower,
+        int24 tickUpper
+    ) external onlyOwner returns (
+        uint256 tokenId,
+        uint128 liquidity,
+        uint256 amount0,
+        uint256 amount1
+    ) {
+        // Get 100% of contract's token balances
+        uint256 wbtcBalance = IERC20(wbtc).balanceOf(address(this));
+        uint256 usdcBalance = IERC20(usdc).balanceOf(address(this));
+
+        require(wbtcBalance > 0 || usdcBalance > 0, "No tokens in contract");
+
+        // Approve position manager for all available tokens
+        if (wbtcBalance > 0) {
+            IERC20(wbtc).approve(address(positionManager), wbtcBalance);
+        }
+        if (usdcBalance > 0) {
+            IERC20(usdc).approve(address(positionManager), usdcBalance);
+        }
+
+        // Mint position with all available tokens
+        INonfungiblePositionManager.MintParams memory params = INonfungiblePositionManager.MintParams({
+            token0: wbtc,
+            token1: usdc,
+            fee: feeTier,
+            tickLower: tickLower,
+            tickUpper: tickUpper,
+            amount0Desired: wbtcBalance,
+            amount1Desired: usdcBalance,
+            amount0Min: 0,
+            amount1Min: 0,
+            recipient: address(this),
+            deadline: block.timestamp
+        });
+
+        (tokenId, liquidity, amount0, amount1) = positionManager.mint(params);
+
+        // Store position ID
+        currentTokenId = tokenId;
+
+        emit PositionCreated(tokenId, liquidity, amount0, amount1);
+
+        // Note: Any unused tokens remain in contract (due to price ratio)
+        // They can be withdrawn via emergencyWithdraw if needed
+    }
+
     /// @notice Collect accumulated fees from the position
     /// @param tokenId The position NFT token ID
     /// @return amount0 Amount of token0 fees collected
