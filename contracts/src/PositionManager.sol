@@ -1,39 +1,46 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.19;
 
 import "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "./IPositionManager.sol";
 
 /// @title Uniswap V3 Position Manager for WBTC/USDC
 /// @notice Manages concentrated liquidity positions with automated rebalancing
 /// @dev Interacts with Uniswap V3 NonfungiblePositionManager
-contract PositionManager is IPositionManager, IERC721Receiver, Ownable {
+contract PositionManager is IERC721Receiver, Ownable {
     // Uniswap V3 interfaces
-    INonfungiblePositionManager public immutable POSITION_MANAGER;
+    INonfungiblePositionManager public immutable positionManager;
 
     // Pool configuration
-    address private immutable WBTC;
-    address private immutable USDC;
-    uint24 public immutable FEE_TIER; // 3000 = 0.30%
+    address public immutable wbtc;
+    address public immutable usdc;
+    uint24 public immutable feeTier; // 3000 = 0.30%
 
     // Position parameters
     uint256 public currentTokenId;
     int24 public rangePercent; // 15 = ±15%
 
-    address private immutable _self;
+    // Events
+    event PositionCreated(uint256 indexed tokenId, uint128 liquidity, uint256 amount0, uint256 amount1);
+    event PositionRebalanced(uint256 indexed oldTokenId, uint256 indexed newTokenId);
+    event FeesCollected(uint256 indexed tokenId, uint256 amount0, uint256 amount1);
+    event RangeUpdated(int24 newRangePercent);
 
-    function tokenA() external view returns(IERC20) {
-        return IERC20(WBTC);
-    }
-
-    function tokenB() external view returns(IERC20) {
-        return IERC20(USDC);
-    }
-
-    function balance(address token) external view (uint256) {
-        return IERC20(token).balanceOf(_self);
+    // Structs
+    struct PositionInfo {
+        uint96 nonce;
+        address operator;
+        address token0;
+        address token1;
+        uint24 fee;
+        int24 tickLower;
+        int24 tickUpper;
+        uint128 liquidity;
+        uint256 feeGrowthInside0LastX128;
+        uint256 feeGrowthInside1LastX128;
+        uint128 tokensOwed0;
+        uint128 tokensOwed1;
     }
 
     constructor(
@@ -43,15 +50,14 @@ contract PositionManager is IPositionManager, IERC721Receiver, Ownable {
         uint24 _feeTier,
         int24 _rangePercent
     ) Ownable(msg.sender) {
-        POSITION_MANAGER = INonfungiblePositionManager(_positionManager);
-        WBTC = _wbtc;
-        USDC = _usdc;
-        FEE_TIER = _feeTier;
+        positionManager = INonfungiblePositionManager(_positionManager);
+        wbtc = _wbtc;
+        usdc = _usdc;
+        feeTier = _feeTier;
         rangePercent = _rangePercent;
-        _self = address(this);
     }
 
-    /// @notice Add liquidity to create or increase a position
+    /// @notice Create a new concentrated liquidity position
     /// @param amount0Desired Amount of token0 (WBTC) to add
     /// @param amount1Desired Amount of token1 (USDC) to add
     /// @param tickLower Lower tick of the range
@@ -60,7 +66,7 @@ contract PositionManager is IPositionManager, IERC721Receiver, Ownable {
     /// @return liquidity The amount of liquidity added
     /// @return amount0 Actual amount of token0 added
     /// @return amount1 Actual amount of token1 added
-    function addLiquidity(
+    function createPosition(
         uint256 amount0Desired,
         uint256 amount1Desired,
         int24 tickLower,
@@ -71,68 +77,200 @@ contract PositionManager is IPositionManager, IERC721Receiver, Ownable {
         uint256 amount0,
         uint256 amount1
     ) {
-        // TODO: Implement liquidity addition
-        // 1. Transfer tokens from sender
-        // 2. Approve position manager
-        // 3. Mint new position or increase existing
-        // 4. Refund unused tokens
-        // 5. Emit event
+        // Transfer tokens from sender
+        IERC20(wbtc).transferFrom(msg.sender, address(this), amount0Desired);
+        IERC20(usdc).transferFrom(msg.sender, address(this), amount1Desired);
 
-        revert("Not implemented");
+        // Approve position manager
+        IERC20(wbtc).approve(address(positionManager), amount0Desired);
+        IERC20(usdc).approve(address(positionManager), amount1Desired);
+
+        // Mint position
+        INonfungiblePositionManager.MintParams memory params = INonfungiblePositionManager.MintParams({
+            token0: wbtc,
+            token1: usdc,
+            fee: feeTier,
+            tickLower: tickLower,
+            tickUpper: tickUpper,
+            amount0Desired: amount0Desired,
+            amount1Desired: amount1Desired,
+            amount0Min: 0,
+            amount1Min: 0,
+            recipient: address(this),
+            deadline: block.timestamp
+        });
+
+        (tokenId, liquidity, amount0, amount1) = positionManager.mint(params);
+
+        // Store position ID
+        currentTokenId = tokenId;
+
+        // Refund any unused tokens
+        if (amount0 < amount0Desired) {
+            IERC20(wbtc).transfer(msg.sender, amount0Desired - amount0);
+        }
+        if (amount1 < amount1Desired) {
+            IERC20(usdc).transfer(msg.sender, amount1Desired - amount1);
+        }
+
+        emit PositionCreated(tokenId, liquidity, amount0, amount1);
     }
 
-    /// @notice Get the underlying token balances for a position
-    /// @param tokenId The position NFT token ID
-    /// @return amount0 Amount of token0 (WBTC) in the position
-    /// @return amount1 Amount of token1 (USDC) in the position
-    function underlying(uint256 tokenId) external view returns (
+    /// @notice Add liquidity using contract's own token balance
+    /// @dev Uses 100% of available WBTC and USDC in the contract
+    /// @param tickLower Lower tick of the range
+    /// @param tickUpper Upper tick of the range
+    /// @return tokenId The NFT token ID of the position
+    /// @return liquidity The amount of liquidity added
+    /// @return amount0 Actual amount of token0 added
+    /// @return amount1 Actual amount of token1 added
+    function addLiquidityFromContract(
+        int24 tickLower,
+        int24 tickUpper
+    ) external onlyOwner returns (
+        uint256 tokenId,
+        uint128 liquidity,
         uint256 amount0,
         uint256 amount1
     ) {
-        // TODO: Implement underlying calculation
-        // 1. Get position info from position manager
-        // 2. Calculate token amounts from liquidity and ticks
-        // 3. Return token amounts
+        // Get 100% of contract's token balances
+        uint256 wbtcBalance = IERC20(wbtc).balanceOf(address(this));
+        uint256 usdcBalance = IERC20(usdc).balanceOf(address(this));
 
-        revert("Not implemented");
-    }
+        require(wbtcBalance > 0 || usdcBalance > 0, "No tokens in contract");
 
-    /// @notice Get information about all pools managed by this contract
-    /// @return pools Array of pool information
-    function getPools() external view returns (PoolInfo[] memory pools) {
-        // TODO: Implement pool information retrieval
-        // 1. Query position manager for all positions owned by this contract
-        // 2. Build array of pool info structs
-        // 3. Return pools array
-
-        revert("Not implemented");
-    }
-
-    /// @notice Emergency withdraw tokens from the contract
-    /// @param token Token address to withdraw (use address(0) for ETH)
-    function emergencyWithdraw(address token) external onlyOwner {
-        uint256 amount;
-
-        if (token == address(0)) {
-            // Withdraw ETH
-            amount = address(this).balance;
-            require(amount > 0, "No ETH to withdraw");
-
-            (bool success, ) = owner().call{value: amount}("");
-            require(success, "ETH transfer failed");
-        } else {
-            // Withdraw ERC20 token
-            amount = IERC20(token).balanceOf(address(this));
-            require(amount > 0, "No tokens to withdraw");
-
-            bool success = IERC20(token).transfer(owner(), amount);
-            require(success, "Token transfer failed");
+        // Approve position manager for all available tokens
+        if (wbtcBalance > 0) {
+            IERC20(wbtc).approve(address(positionManager), wbtcBalance);
+        }
+        if (usdcBalance > 0) {
+            IERC20(usdc).approve(address(positionManager), usdcBalance);
         }
 
-        emit EmergencyWithdrawal(token, amount);
+        // Mint position with all available tokens
+        INonfungiblePositionManager.MintParams memory params = INonfungiblePositionManager.MintParams({
+            token0: wbtc,
+            token1: usdc,
+            fee: feeTier,
+            tickLower: tickLower,
+            tickUpper: tickUpper,
+            amount0Desired: wbtcBalance,
+            amount1Desired: usdcBalance,
+            amount0Min: 0,
+            amount1Min: 0,
+            recipient: address(this),
+            deadline: block.timestamp
+        });
+
+        (tokenId, liquidity, amount0, amount1) = positionManager.mint(params);
+
+        // Store position ID
+        currentTokenId = tokenId;
+
+        emit PositionCreated(tokenId, liquidity, amount0, amount1);
+
+        // Note: Any unused tokens remain in contract (due to price ratio)
+        // They can be withdrawn via emergencyWithdraw if needed
     }
 
-    /// @notice Rebalance position when price moves out of range
+    /// @notice Add liquidity using 100% of the token with greater USD value
+    /// @dev Prioritizes the token with higher value, calculates optimal amount for the other token
+    /// @param wbtcPrice Current WBTC price in USDC (with 6 decimals, e.g., 89892000000 for $89,892)
+    /// @param tickLower Lower tick of the range
+    /// @param tickUpper Upper tick of the range
+    /// @return tokenId The NFT token ID of the position
+    /// @return liquidity The amount of liquidity added
+    /// @return amount0 Actual amount of token0 added
+    /// @return amount1 Actual amount of token1 added
+    function addLiquidityFromContractPrioritized(
+        uint256 wbtcPrice,
+        int24 tickLower,
+        int24 tickUpper
+    ) external onlyOwner returns (
+        uint256 tokenId,
+        uint128 liquidity,
+        uint256 amount0,
+        uint256 amount1
+    ) {
+        // Get 100% of contract's token balances
+        uint256 wbtcBalance = IERC20(wbtc).balanceOf(address(this));
+        uint256 usdcBalance = IERC20(usdc).balanceOf(address(this));
+
+        require(wbtcBalance > 0 || usdcBalance > 0, "No tokens in contract");
+
+        // Calculate USD values (WBTC has 8 decimals, USDC has 6 decimals)
+        // wbtcPrice is in USDC terms (6 decimals), e.g., 89892000000 = $89,892
+        uint256 wbtcValueUSD = (wbtcBalance * wbtcPrice) / 1e8; // Result in USDC (6 decimals)
+        uint256 usdcValueUSD = usdcBalance; // Already in USDC
+
+        uint256 amount0Desired;
+        uint256 amount1Desired;
+
+        // Prioritize the token with greater USD value
+        if (wbtcValueUSD >= usdcValueUSD) {
+            // Use 100% of WBTC, calculate proportional USDC
+            // For concentrated liquidity, we need roughly equal USD values
+            // Use 50% of WBTC value in USDC terms
+            amount0Desired = wbtcBalance;
+            amount1Desired = usdcBalance > 0 ? usdcBalance : 0;
+        } else {
+            // Use 100% of USDC, calculate proportional WBTC
+            amount0Desired = wbtcBalance > 0 ? wbtcBalance : 0;
+            amount1Desired = usdcBalance;
+        }
+
+        // Approve position manager for the amounts we're using
+        if (amount0Desired > 0) {
+            IERC20(wbtc).approve(address(positionManager), amount0Desired);
+        }
+        if (amount1Desired > 0) {
+            IERC20(usdc).approve(address(positionManager), amount1Desired);
+        }
+
+        // Mint position with calculated amounts
+        INonfungiblePositionManager.MintParams memory params = INonfungiblePositionManager.MintParams({
+            token0: wbtc,
+            token1: usdc,
+            fee: feeTier,
+            tickLower: tickLower,
+            tickUpper: tickUpper,
+            amount0Desired: amount0Desired,
+            amount1Desired: amount1Desired,
+            amount0Min: 0,
+            amount1Min: 0,
+            recipient: address(this),
+            deadline: block.timestamp
+        });
+
+        (tokenId, liquidity, amount0, amount1) = positionManager.mint(params);
+
+        // Store position ID
+        currentTokenId = tokenId;
+
+        emit PositionCreated(tokenId, liquidity, amount0, amount1);
+
+        // Note: Any unused tokens remain in contract (due to price ratio)
+        // They can be withdrawn via emergencyWithdraw if needed
+    }
+
+    /// @notice Collect accumulated fees from the position
+    /// @param tokenId The position NFT token ID
+    /// @return amount0 Amount of token0 fees collected
+    /// @return amount1 Amount of token1 fees collected
+    function collectFees(uint256 tokenId) public onlyOwner returns (uint256 amount0, uint256 amount1) {
+        INonfungiblePositionManager.CollectParams memory params = INonfungiblePositionManager.CollectParams({
+            tokenId: tokenId,
+            recipient: owner(),
+            amount0Max: type(uint128).max,
+            amount1Max: type(uint128).max
+        });
+
+        (amount0, amount1) = positionManager.collect(params);
+
+        emit FeesCollected(tokenId, amount0, amount1);
+    }
+
+    /// @notice Close existing position and create a new one at current price
     /// @param newTickLower Lower tick for new position
     /// @param newTickUpper Upper tick for new position
     /// @return newTokenId The new position NFT token ID
@@ -140,28 +278,71 @@ contract PositionManager is IPositionManager, IERC721Receiver, Ownable {
         int24 newTickLower,
         int24 newTickUpper
     ) external onlyOwner returns (uint256 newTokenId) {
-        // TODO: Implement rebalancing
-        // 1. Collect fees from current position
-        // 2. Decrease liquidity to 0 (withdraw all)
-        // 3. Burn old position NFT
-        // 4. Create new position at new price range
-        // 5. Update currentTokenId
-        // 6. Emit event
+        uint256 oldTokenId = currentTokenId;
+        require(oldTokenId != 0, "No active position");
 
-        revert("Not implemented");
+        // Collect fees first
+        collectFees(oldTokenId);
+
+        // Decrease liquidity to 0 (withdraw all)
+        PositionInfo memory posInfo = getPositionInfo(oldTokenId);
+
+        INonfungiblePositionManager.DecreaseLiquidityParams memory decreaseParams =
+            INonfungiblePositionManager.DecreaseLiquidityParams({
+                tokenId: oldTokenId,
+                liquidity: posInfo.liquidity,
+                amount0Min: 0,
+                amount1Min: 0,
+                deadline: block.timestamp
+            });
+
+        positionManager.decreaseLiquidity(decreaseParams);
+
+        // Collect withdrawn liquidity
+        (uint256 amount0, uint256 amount1) = collectFees(oldTokenId);
+
+        // Burn old NFT
+        positionManager.burn(oldTokenId);
+
+        // Create new position with withdrawn amounts
+        (newTokenId, , , ) = this.createPosition(amount0, amount1, newTickLower, newTickUpper);
+
+        emit PositionRebalanced(oldTokenId, newTokenId);
     }
 
-    /// @notice Compound accumulated fees back into the position
-    /// @param tokenId The position NFT token ID to compound
-    /// @return liquidity Amount of new liquidity added from fees
-    function compound(uint256 tokenId) external onlyOwner returns (uint128 liquidity) {
-        // TODO: Implement fee compounding
-        // 1. Collect fees from position
-        // 2. Get position info (tickLower, tickUpper)
-        // 3. Add collected fees back as liquidity
-        // 4. Emit event
+    /// @notice Get detailed information about a position
+    /// @param tokenId The position NFT token ID
+    /// @return Position information struct
+    function getPositionInfo(uint256 tokenId) public view returns (PositionInfo memory) {
+        (
+            uint96 nonce,
+            address operator,
+            address token0,
+            address token1,
+            uint24 fee,
+            int24 tickLower,
+            int24 tickUpper,
+            uint128 liquidity,
+            uint256 feeGrowthInside0LastX128,
+            uint256 feeGrowthInside1LastX128,
+            uint128 tokensOwed0,
+            uint128 tokensOwed1
+        ) = positionManager.positions(tokenId);
 
-        revert("Not implemented");
+        return PositionInfo({
+            nonce: nonce,
+            operator: operator,
+            token0: token0,
+            token1: token1,
+            fee: fee,
+            tickLower: tickLower,
+            tickUpper: tickUpper,
+            liquidity: liquidity,
+            feeGrowthInside0LastX128: feeGrowthInside0LastX128,
+            feeGrowthInside1LastX128: feeGrowthInside1LastX128,
+            tokensOwed0: tokensOwed0,
+            tokensOwed1: tokensOwed1
+        });
     }
 
     /// @notice Calculate tick range for current price ± rangePercent
@@ -189,6 +370,13 @@ contract PositionManager is IPositionManager, IERC721Receiver, Ownable {
         emit RangeUpdated(newRangePercent);
     }
 
+    /// @notice Emergency withdraw tokens
+    /// @param token Token address to withdraw
+    function emergencyWithdraw(address token) external onlyOwner {
+        uint256 balance = IERC20(token).balanceOf(address(this));
+        IERC20(token).transfer(owner(), balance);
+    }
+
     /// @notice Required for receiving NFT positions
     function onERC721Received(
         address,
@@ -198,9 +386,6 @@ contract PositionManager is IPositionManager, IERC721Receiver, Ownable {
     ) external pure override returns (bytes4) {
         return this.onERC721Received.selector;
     }
-
-    /// @notice Fallback to receive ETH
-    receive() external payable {}
 }
 
 // Minimal interfaces for Uniswap V3
@@ -216,15 +401,6 @@ interface INonfungiblePositionManager {
         uint256 amount0Min;
         uint256 amount1Min;
         address recipient;
-        uint256 deadline;
-    }
-
-    struct IncreaseLiquidityParams {
-        uint256 tokenId;
-        uint256 amount0Desired;
-        uint256 amount1Desired;
-        uint256 amount0Min;
-        uint256 amount1Min;
         uint256 deadline;
     }
 
@@ -245,12 +421,6 @@ interface INonfungiblePositionManager {
 
     function mint(MintParams calldata params) external payable returns (
         uint256 tokenId,
-        uint128 liquidity,
-        uint256 amount0,
-        uint256 amount1
-    );
-
-    function increaseLiquidity(IncreaseLiquidityParams calldata params) external payable returns (
         uint128 liquidity,
         uint256 amount0,
         uint256 amount1

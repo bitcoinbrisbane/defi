@@ -100,6 +100,26 @@ interface IPositionManager {
         uint256 amount1
     );
 
+    /// @notice Add liquidity using 100% of the token with greater USD value
+    /// @dev Prioritizes the token with higher value, uses all available amount of that token
+    /// @param wbtcPrice Current WBTC price in USDC (with 6 decimals, e.g., 89892000000 for $89,892)
+    /// @param tickLower Lower tick of the range
+    /// @param tickUpper Upper tick of the range
+    /// @return tokenId The NFT token ID of the position
+    /// @return liquidity The amount of liquidity added
+    /// @return amount0 Actual amount of token0 added
+    /// @return amount1 Actual amount of token1 added
+    function addLiquidityFromContractPrioritized(
+        uint256 wbtcPrice,
+        int24 tickLower,
+        int24 tickUpper
+    ) external returns (
+        uint256 tokenId,
+        uint128 liquidity,
+        uint256 amount0,
+        uint256 amount1
+    );
+
     /// @notice Collect accumulated fees from the position
     /// @param tokenId The position NFT token ID
     /// @return amount0 Amount of token0 fees collected

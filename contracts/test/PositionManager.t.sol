@@ -31,10 +31,10 @@ contract PositionManagerTest is Test {
     }
 
     function testDeployment() public view {
-        assertEq(address(manager.POSITION_MANAGER()), UNISWAP_V3_POSITION_MANAGER);
-        assertEq(address(manager.WBTC()), WBTC);
-        assertEq(address(manager.USDC()), USDC);
-        assertEq(manager.FEE_TIER(), FEE_TIER);
+        assertEq(address(manager.positionManager()), UNISWAP_V3_POSITION_MANAGER);
+        assertEq(address(manager.wbtc()), WBTC);
+        assertEq(address(manager.usdc()), USDC);
+        assertEq(manager.feeTier(), FEE_TIER);
         assertEq(manager.rangePercent(), RANGE_PERCENT);
     }
 
