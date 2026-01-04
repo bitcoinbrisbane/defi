@@ -138,13 +138,9 @@ interface IPositionManager {
     );
 
     /// @notice Rebalance position when price moves out of range
-    /// @param newTickLower Lower tick for new position
-    /// @param newTickUpper Upper tick for new position
+    /// @dev Automatically fetches current tick from pool and calculates range
     /// @return newTokenId The new position NFT token ID
-    function rebalance(
-        int24 newTickLower,
-        int24 newTickUpper
-    ) external returns (uint256 newTokenId);
+    function rebalance() external returns (uint256 newTokenId);
 
     /// @notice Compound accumulated fees back into the position
     /// @param tokenId The position NFT token ID to compound

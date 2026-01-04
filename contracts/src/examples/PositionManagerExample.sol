@@ -31,12 +31,9 @@ contract PositionManagerExample {
     }
 
     /// @notice Example: Rebalance a position
-    function exampleRebalance(int24 currentTick) external returns (uint256 newTokenId) {
-        // Calculate new tick range using the interface
-        (int24 newTickLower, int24 newTickUpper) = positionManager.calculateTickRange(currentTick);
-
-        // Rebalance through the interface
-        newTokenId = positionManager.rebalance(newTickLower, newTickUpper);
+    function exampleRebalance() external returns (uint256 newTokenId) {
+        // Rebalance through the interface - automatically uses current price
+        newTokenId = positionManager.rebalance();
     }
 
     /// @notice Example: Compound fees

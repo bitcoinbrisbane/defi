@@ -314,13 +314,9 @@ contract PositionManager is IPositionManager, IERC721Receiver, Ownable {
     }
 
     /// @notice Close existing position and create a new one at current price
-    /// @param newTickLower Lower tick for new position
-    /// @param newTickUpper Upper tick for new position
+    /// @dev Automatically fetches current tick from pool and calculates range
     /// @return newTokenId The new position NFT token ID
-    function rebalance(
-        int24 newTickLower,
-        int24 newTickUpper
-    ) external onlyOwner returns (uint256 newTokenId) {
+    function rebalance() external onlyOwner returns (uint256 newTokenId) {
         uint256 oldTokenId = currentTokenId;
         require(oldTokenId != 0, "No active position");
 
@@ -346,6 +342,12 @@ contract PositionManager is IPositionManager, IERC721Receiver, Ownable {
 
         // Burn old NFT
         positionManager.burn(oldTokenId);
+
+        // Get current tick from the pool
+        (, int24 currentTick, , , , , ) = pool.slot0();
+
+        // Calculate new tick range based on current tick and rangePercent
+        (int24 newTickLower, int24 newTickUpper) = calculateTickRange(currentTick);
 
         // Create new position with withdrawn amounts
         (newTokenId, , , ) = this.createPosition(amount0, amount1, newTickLower, newTickUpper);
