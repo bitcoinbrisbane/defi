@@ -105,14 +105,6 @@ contract PositionManager is IERC721Receiver, Ownable {
         // Store position ID
         currentTokenId = tokenId;
 
-        // Refund any unused tokens
-        if (amount0 < amount0Desired) {
-            IERC20(wbtc).transfer(msg.sender, amount0Desired - amount0);
-        }
-        if (amount1 < amount1Desired) {
-            IERC20(usdc).transfer(msg.sender, amount1Desired - amount1);
-        }
-
         emit PositionCreated(tokenId, liquidity, amount0, amount1);
     }
 
@@ -134,8 +126,8 @@ contract PositionManager is IERC721Receiver, Ownable {
         uint256 amount1
     ) {
         // Get 100% of contract's token balances
-        uint256 wbtcBalance = IERC20(wbtc).balanceOf(address(this));
-        uint256 usdcBalance = IERC20(usdc).balanceOf(address(this));
+        uint256 wbtcBalance = IERC20(wbtc).balanceOf(_self);
+        uint256 usdcBalance = IERC20(usdc).balanceOf(_self);
 
         require(wbtcBalance > 0 || usdcBalance > 0, "No tokens in contract");
 
