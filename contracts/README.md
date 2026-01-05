@@ -77,11 +77,24 @@ Create a new position with specific tick range.
 
 #### `addLiquidityFromContract()`
 **Zero-parameter function** that automatically:
+- **Swaps tokens if needed** - If contract has 100% of one token, automatically swaps half to get both tokens
 - Fetches current tick from Uniswap pool
 - Calculates optimal ±15% range
 - Uses 100% of contract's WBTC and USDC balances
 
+**Automatic Token Balancing:**
+- Detects single-token deposits
+- Uses Chainlink price feed for validation
+- Swaps exactly 50% to achieve balanced ratio
+- Applies 0.5% slippage protection
+- Emits `TokensSwapped` event
+
 ```solidity
+// Works with ANY token combination:
+// - Send only WBTC -> auto-swaps half to USDC
+// - Send only USDC -> auto-swaps half to WBTC
+// - Send both -> uses both directly
+
 (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1) =
     manager.addLiquidityFromContract();
 ```
@@ -289,11 +302,16 @@ contracts/
 
 ```
 Uniswap V3 Position Manager: 0xC36442b4a4522E871399CD717aBDD847Ab11FE88
+Uniswap V3 Swap Router:      0xE592427A0AEce92De3Edee1F18E0157C05861564
 WBTC/USDC Pool (0.30%):      0x9a772018FbD77fcD2d25657e5C547BAfF3Fd7D16
 Chainlink WBTC/USD Feed:     0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c
 WBTC:                        0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599
 USDC:                        0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48
 ```
+
+**Active Position:**
+- NFT Position ID: `1166077`
+- Position Details: See [POSITION_INFO.md](../POSITION_INFO.md)
 
 ## Development
 
@@ -333,8 +351,10 @@ forge coverage
 - Owner-only controls for sensitive operations
 - Public `compound()` for trustless automation
 - Safe ETH transfers with success checks
-- Slippage set to 0 (use private RPCs for production)
+- **Swap slippage protection** - 0.5% tolerance with Chainlink price validation
+- Slippage set to 0 for liquidity operations (use private RPCs for production)
 - No unused token left behind (sweep on emergency)
+- Reentrancy protection on all state-changing functions
 
 ## Documentation
 
