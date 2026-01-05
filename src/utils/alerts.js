@@ -125,7 +125,7 @@ export class AlertSystem {
   formatPositionStatus(status) {
     const inRangeIcon = status.range.inRange ? "✅" : "❌";
 
-    return `
+    let output = `
 ${inRangeIcon} Position Status:
   Price: $${status.price.current.toLocaleString()} (${status.price.source})
   Range: $${status.range.lower.toLocaleString()} - $${status.range.upper.toLocaleString()}
@@ -134,6 +134,19 @@ ${inRangeIcon} Position Status:
   Distance to Upper: ${status.distance.toUpperBound.toFixed(2)}%
   Alert Level: ${status.alertLevel.toUpperCase()}
 `;
+
+    // Add on-chain data if available
+    if (status.onChain) {
+      output += `
+📊 On-Chain Position Data:
+  Tick Range: ${status.onChain.tickLower} - ${status.onChain.tickUpper}
+  Liquidity: ${status.onChain.liquidity}
+  In Range (on-chain): ${status.onChain.inRange ? "YES" : "NO"}
+  Pending Fees: ${status.onChain.tokensOwed0} WBTC, ${status.onChain.tokensOwed1} USDC
+`;
+    }
+
+    return output;
   }
 
   /**

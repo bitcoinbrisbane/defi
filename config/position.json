@@ -12,7 +12,7 @@
     "rangePercent": 15,
     "targetWeeklyFees": 300,
     "targetAnnualFees": 15600,
-    "nftTokenId": null
+    "nftTokenId": 1166077
   },
   "monitoring": {
     "checkIntervalSeconds": 900,

@@ -108,13 +108,13 @@ export class PoolService {
       const position = await this.positionManager.positions(tokenId);
 
       return {
-        nonce: position.nonce,
+        nonce: Number(position.nonce),
         operator: position.operator,
         token0: position.token0,
         token1: position.token1,
-        fee: position.fee,
-        tickLower: position.tickLower,
-        tickUpper: position.tickUpper,
+        fee: Number(position.fee),
+        tickLower: Number(position.tickLower),
+        tickUpper: Number(position.tickUpper),
         liquidity: position.liquidity,
         feeGrowthInside0LastX128: position.feeGrowthInside0LastX128,
         feeGrowthInside1LastX128: position.feeGrowthInside1LastX128,
@@ -144,9 +144,9 @@ export class PoolService {
       return {
         price,
         sqrtPriceX96: sqrtPriceX96.toString(),
-        tick: slot0.tick,
-        observationIndex: slot0.observationIndex,
-        observationCardinality: slot0.observationCardinality,
+        tick: Number(slot0.tick),
+        observationIndex: Number(slot0.observationIndex),
+        observationCardinality: Number(slot0.observationCardinality),
         liquidity: liquidity.toString()
       };
     } catch (error) {
@@ -194,14 +194,14 @@ export class PoolService {
    * Calculate tick to price conversion
    */
   tickToPrice(tick) {
-    return Math.pow(1.0001, tick);
+    return Math.pow(1.0001, Number(tick));
   }
 
   /**
    * Check if position is in range
    */
   isPositionInRange(currentTick, tickLower, tickUpper) {
-    return currentTick >= tickLower && currentTick <= tickUpper;
+    return Number(currentTick) >= Number(tickLower) && Number(currentTick) <= Number(tickUpper);
   }
 
   /**

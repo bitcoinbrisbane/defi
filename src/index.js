@@ -12,6 +12,7 @@ import { createPoolService } from "./services/poolService.js";
 import { createPositionService } from "./services/positionService.js";
 import { createAnalyticsService } from "./services/analyticsService.js";
 import { createAlertSystem } from "./utils/alerts.js";
+import { createFeeHistoryService } from "./services/feeHistoryService.js";
 
 // Load environment variables
 dotenv.config();
@@ -43,6 +44,7 @@ class LPMonitor {
     this.poolService = rpcUrl ? createPoolService(rpcUrl) : null;
     this.analyticsService = createAnalyticsService(this.config);
     this.alertSystem = createAlertSystem(this.config);
+    this.feeHistoryService = createFeeHistoryService(this.config);
 
     // Create position service
     this.positionService = createPositionService(
@@ -159,6 +161,39 @@ class LPMonitor {
 
     const status = await this.positionService.getDetailedPositionStatus();
     this.alertSystem.logPositionStatus(status);
+
+    // Fetch fee data from on-chain
+    if (this.config.position.nftTokenId) {
+      console.log("💰 FEE EARNINGS:");
+      try {
+        const feeSummary = await this.feeHistoryService.getFeeSummary(
+          this.config.position.nftTokenId,
+          this.config.pool.poolAddress,
+          status.price.current,
+          1 // USDC price
+        );
+
+        if (feeSummary) {
+          // Show unclaimed fees (accrued but not yet collected)
+          console.log("  Unclaimed (Ready to Collect):");
+          console.log(`    WBTC: ${feeSummary.unclaimed.token0.amount.toFixed(8)} ($${feeSummary.unclaimed.token0.usd.toFixed(2)})`);
+          console.log(`    USDC: ${feeSummary.unclaimed.token1.amount.toFixed(2)} ($${feeSummary.unclaimed.token1.usd.toFixed(2)})`);
+          console.log(`    Total: $${feeSummary.unclaimed.totalUSD.toFixed(2)}`);
+
+          // Show recent collections if any
+          if (feeSummary.last24h && feeSummary.last24h.collectCount > 0) {
+            console.log("  Recently Collected:");
+            console.log(`    WBTC: ${feeSummary.last24h.token0.amount.toFixed(8)} ($${feeSummary.last24h.token0.usd.toFixed(2)})`);
+            console.log(`    USDC: ${feeSummary.last24h.token1.amount.toFixed(2)} ($${feeSummary.last24h.token1.usd.toFixed(2)})`);
+            console.log(`    Total: $${feeSummary.last24h.totalUSD.toFixed(2)} (${feeSummary.last24h.collectCount} collections)`);
+          }
+        } else {
+          console.log("  Unable to calculate fees");
+        }
+      } catch (error) {
+        console.log(`  Unable to fetch fee data: ${error.message}`);
+      }
+    }
 
     // Show fee projection
     const projection = this.analyticsService.getFeeProjection();
