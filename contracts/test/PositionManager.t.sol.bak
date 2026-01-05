@@ -26,7 +26,6 @@ contract PositionManagerTest is Test {
         // Deploy PositionManager
         manager = new PositionManager(
             UNISWAP_V3_POSITION_MANAGER,
-            UNISWAP_V3_SWAP_ROUTER,
             WBTC_USDC_POOL,
             WBTC_USD_PRICE_FEED,
             WBTC,

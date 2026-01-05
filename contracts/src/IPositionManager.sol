@@ -40,6 +40,7 @@ interface IPositionManager {
     event FeesCompounded(uint256 indexed tokenId, uint256 amount0, uint256 amount1);
     event EmergencyWithdrawal(address indexed token, uint256 amount);
     event RangeUpdated(int24 newRangePercent);
+    event TokensSwapped(address indexed tokenIn, address indexed tokenOut, uint256 amountIn, uint256 amountOut);
 
     // Core Position Management Functions
 

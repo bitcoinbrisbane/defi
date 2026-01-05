@@ -30,11 +30,12 @@ for i in {0..6}; do
     # Fetch current data (we'll simulate historical by checking multiple times)
     response=$(curl -s "https://api.dexscreener.com/latest/dex/pairs/ethereum/$POOL_030")
 
-    volume24h=$(echo "$response" | grep -o '"h24":"[^"]*"' | head -1 | cut -d'"' -f4)
+    # Extract volume.h24 from JSON
+    volume24h=$(echo "$response" | grep -o '"volume":{[^}]*"h24":[0-9.]*' | grep -o '[0-9.]*$')
 
     if [ -n "$volume24h" ]; then
-        # Remove commas and convert to number
-        volume_clean=$(echo "$volume24h" | sed 's/,//g')
+        # Convert to integer (remove decimals)
+        volume_clean=$(echo "$volume24h" | cut -d'.' -f1)
         date=$(date -v-${i}d +%Y-%m-%d 2>/dev/null || date -d "${i} days ago" +%Y-%m-%d)
 
         echo "$date:$volume_clean" >> "$TEMP_FILE"

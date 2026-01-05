@@ -16,6 +16,7 @@ contract PositionManager is IPositionManager, IERC721Receiver, Ownable, Reentran
     // Uniswap V3 interfaces
     INonfungiblePositionManager public immutable positionManager;
     IUniswapV3Pool public immutable pool;
+    ISwapRouter public immutable swapRouter;
     AggregatorV3Interface public immutable priceFeed;
 
     // Pool configuration
@@ -30,6 +31,9 @@ contract PositionManager is IPositionManager, IERC721Receiver, Ownable, Reentran
 
     // Chainlink configuration
     uint256 public constant PRICE_STALENESS_THRESHOLD = 3600; // 1 hour in seconds
+
+    // Swap configuration
+    uint256 public constant SWAP_SLIPPAGE_TOLERANCE = 50; // 0.5% = 50 basis points
 
     /// @notice Get validated WBTC price from Chainlink with staleness check
     /// @dev Reverts if price is stale (>1 hour old) or invalid
@@ -73,6 +77,7 @@ contract PositionManager is IPositionManager, IERC721Receiver, Ownable, Reentran
 
     constructor(
         address _positionManager,
+        address _swapRouter,
         address _pool,
         address _priceFeed,
         address _wbtc,
@@ -81,6 +86,7 @@ contract PositionManager is IPositionManager, IERC721Receiver, Ownable, Reentran
         int24 _rangePercent
     ) Ownable(msg.sender) {
         positionManager = INonfungiblePositionManager(_positionManager);
+        swapRouter = ISwapRouter(_swapRouter);
         pool = IUniswapV3Pool(_pool);
         priceFeed = AggregatorV3Interface(_priceFeed);
         wbtc = _wbtc;
@@ -141,9 +147,90 @@ contract PositionManager is IPositionManager, IERC721Receiver, Ownable, Reentran
         emit PositionCreated(tokenId, liquidity, amount0, amount1);
     }
 
+    /// @notice Swap tokens to balance holdings if contract has 100% of one token
+    /// @dev Swaps half of the single token to get both tokens for liquidity provision
+    /// @dev Uses Chainlink price feed for swap validation
+    /// @return swapped True if a swap was performed
+    /// @return amountIn Amount of tokens swapped in
+    /// @return amountOut Amount of tokens received
+    function _balanceTokens() internal returns (
+        bool swapped,
+        uint256 amountIn,
+        uint256 amountOut
+    ) {
+        uint256 wbtcBalance = IERC20(wbtc).balanceOf(_self);
+        uint256 usdcBalance = IERC20(usdc).balanceOf(_self);
+
+        // If we have both tokens, no swap needed
+        if (wbtcBalance > 0 && usdcBalance > 0) {
+            return (false, 0, 0);
+        }
+
+        // Get validated WBTC price from Chainlink
+        uint256 wbtcPrice = _getValidatedWBTCPrice();
+
+        // Case 1: Only WBTC, swap half to USDC
+        if (wbtcBalance > 0 && usdcBalance == 0) {
+            amountIn = wbtcBalance / 2;
+
+            // Calculate expected USDC output
+            uint256 expectedOut = (amountIn * wbtcPrice) / 1e8; // WBTC has 8 decimals
+            uint256 minAmountOut = (expectedOut * (10000 - SWAP_SLIPPAGE_TOLERANCE)) / 10000;
+
+            // Approve swap router
+            IERC20(wbtc).approve(address(swapRouter), amountIn);
+
+            // Perform swap: WBTC -> USDC
+            ISwapRouter.ExactInputSingleParams memory params = ISwapRouter.ExactInputSingleParams({
+                tokenIn: wbtc,
+                tokenOut: usdc,
+                fee: feeTier,
+                recipient: _self,
+                deadline: block.timestamp,
+                amountIn: amountIn,
+                amountOutMinimum: minAmountOut,
+                sqrtPriceLimitX96: 0 // No price limit
+            });
+
+            amountOut = swapRouter.exactInputSingle(params);
+            swapped = true;
+
+            emit TokensSwapped(wbtc, usdc, amountIn, amountOut);
+        }
+        // Case 2: Only USDC, swap half to WBTC
+        else if (usdcBalance > 0 && wbtcBalance == 0) {
+            amountIn = usdcBalance / 2;
+
+            // Calculate expected WBTC output
+            uint256 expectedOut = (amountIn * 1e8) / wbtcPrice; // WBTC has 8 decimals
+            uint256 minAmountOut = (expectedOut * (10000 - SWAP_SLIPPAGE_TOLERANCE)) / 10000;
+
+            // Approve swap router
+            IERC20(usdc).approve(address(swapRouter), amountIn);
+
+            // Perform swap: USDC -> WBTC
+            ISwapRouter.ExactInputSingleParams memory params = ISwapRouter.ExactInputSingleParams({
+                tokenIn: usdc,
+                tokenOut: wbtc,
+                fee: feeTier,
+                recipient: _self,
+                deadline: block.timestamp,
+                amountIn: amountIn,
+                amountOutMinimum: minAmountOut,
+                sqrtPriceLimitX96: 0 // No price limit
+            });
+
+            amountOut = swapRouter.exactInputSingle(params);
+            swapped = true;
+
+            emit TokensSwapped(usdc, wbtc, amountIn, amountOut);
+        }
+    }
+
     /// @notice Add liquidity using contract's own token balance
     /// @dev Uses 100% of available WBTC and USDC in the contract
     /// @dev Automatically fetches current tick from pool and calculates range
+    /// @dev Automatically balances tokens if only one token is present
     /// @return tokenId The NFT token ID of the position
     /// @return liquidity The amount of liquidity added
     /// @return amount0 Actual amount of token0 added
@@ -154,13 +241,16 @@ contract PositionManager is IPositionManager, IERC721Receiver, Ownable, Reentran
         uint256 amount0,
         uint256 amount1
     ) {
+        // Balance tokens if we only have one (swap half to get both)
+        _balanceTokens();
+
         // Get current tick from the pool
         (, int24 currentTick, , , , , ) = pool.slot0();
 
         // Calculate tick range based on current tick and rangePercent
         (int24 tickLower, int24 tickUpper) = calculateTickRange(currentTick);
 
-        // Get 100% of contract's token balances
+        // Get 100% of contract's token balances (after balancing)
         uint256 wbtcBalance = IERC20(wbtc).balanceOf(_self);
         uint256 usdcBalance = IERC20(usdc).balanceOf(_self);
 
@@ -382,18 +472,71 @@ contract PositionManager is IPositionManager, IERC721Receiver, Ownable, Reentran
         uint256 oldTokenId = currentTokenId;
         require(oldTokenId != 0, "No active position");
 
-        // Close position and get withdrawn amounts
-        (uint256 amount0, uint256 amount1) = this.closePosition();
+        // --- Close old position ---
 
-        // Get current tick from the pool
-        (, int24 currentTick, , , , , ) = pool.slot0();
+        // Decrease liquidity to 0
+        {
+            PositionInfo memory posInfo = getPositionInfo(oldTokenId);
+            positionManager.decreaseLiquidity(
+                INonfungiblePositionManager.DecreaseLiquidityParams({
+                    tokenId: oldTokenId,
+                    liquidity: posInfo.liquidity,
+                    amount0Min: 0,
+                    amount1Min: 0,
+                    deadline: block.timestamp
+                })
+            );
+        }
 
-        // Calculate new tick range based on current tick and rangePercent
-        (int24 newTickLower, int24 newTickUpper) = calculateTickRange(currentTick);
+        // Collect all tokens to contract
+        (uint256 amount0, uint256 amount1) = positionManager.collect(
+            INonfungiblePositionManager.CollectParams({
+                tokenId: oldTokenId,
+                recipient: _self,
+                amount0Max: type(uint128).max,
+                amount1Max: type(uint128).max
+            })
+        );
 
-        // Create new position with withdrawn amounts
-        (newTokenId, , , ) = this.createPosition(amount0, amount1, newTickLower, newTickUpper);
+        // Burn old NFT and emit close event
+        positionManager.burn(oldTokenId);
+        currentTokenId = 0;
+        emit PositionClosed(oldTokenId, amount0, amount1);
 
+        // --- Create new position ---
+
+        // Get current tick and calculate range
+        int24 tickLower;
+        int24 tickUpper;
+        {
+            (, int24 currentTick, , , , , ) = pool.slot0();
+            (tickLower, tickUpper) = calculateTickRange(currentTick);
+        }
+
+        // Approve and mint new position
+        IERC20(wbtc).approve(address(positionManager), amount0);
+        IERC20(usdc).approve(address(positionManager), amount1);
+
+        uint128 liquidity;
+        (newTokenId, liquidity, amount0, amount1) = positionManager.mint(
+            INonfungiblePositionManager.MintParams({
+                token0: wbtc,
+                token1: usdc,
+                fee: feeTier,
+                tickLower: tickLower,
+                tickUpper: tickUpper,
+                amount0Desired: amount0,
+                amount1Desired: amount1,
+                amount0Min: 0,
+                amount1Min: 0,
+                recipient: _self,
+                deadline: block.timestamp
+            })
+        );
+
+        // Update state and emit events
+        currentTokenId = newTokenId;
+        emit PositionCreated(newTokenId, liquidity, amount0, amount1);
         emit PositionRebalanced(oldTokenId, newTokenId);
     }
 

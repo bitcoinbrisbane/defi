@@ -16,10 +16,13 @@ The `PositionManager` contract provides automated management of Uniswap V3 conce
 ### Key Features
 
 - ✅ **Zero-Parameter Functions** - Fully automated operations using Chainlink oracles and Uniswap pool data
+- ✅ **Automated Token Swapping** - Automatically swaps tokens to achieve 50/50 balance before adding liquidity
 - ✅ **Automated Position Creation** - Create concentrated liquidity positions within ±15% range
 - ✅ **Fee Collection & Compounding** - Collect and reinvest trading fees (public function - anyone can trigger!)
 - ✅ **Auto-Rebalancing** - Close and recreate positions at current market price
 - ✅ **Emergency Controls** - Owner-controlled emergency withdrawal of all assets
+- ✅ **Price Feed Protection** - Chainlink price staleness checks (1-hour threshold)
+- ✅ **Reentrancy Protection** - All state-changing functions protected with ReentrancyGuard
 - ✅ **Gas Optimized** - Uses immutable `_self` address for gas savings
 - ✅ **ETH Compatible** - Can receive and sweep ETH
 
