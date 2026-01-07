@@ -1,6 +1,21 @@
 /**
  * Fetch pool data directly using public APIs and explorers
  * Alternative to The Graph when subgraph is unavailable
+ *
+ * ⚠️ CRITICAL LIMITATION:
+ * This script uses TOTAL pool TVL from public APIs (DexScreener, Defined.fi).
+ * However, in Uniswap V3, most liquidity is CONCENTRATED in specific price ranges.
+ *
+ * The ACTUAL active liquidity at current price can be 100-300x higher than
+ * what these APIs report as "total TVL". This means APR calculations will be
+ * significantly OVERESTIMATED.
+ *
+ * For ACCURATE calculations, you need to:
+ * 1. Query pool.liquidity() on-chain (active liquidity at current tick)
+ * 2. Use that instead of total TVL in APR calculations
+ * 3. See check_position_public.js for how to get real active liquidity
+ *
+ * Example: Pool shows $3.85M TVL, but active liquidity = 606B units (~$160M+ equivalent)
  */
 
 import axios from "axios";
@@ -132,8 +147,11 @@ function calculateMetrics(poolData, feeTier) {
   const annualFees = annualVolume * feeRate;
   const baseAPR = (annualFees / avgTVL) * 100;
 
-  // Calculate with concentration
-  const concentrationFactor = 100 / (2 * config.position.rangePercent);
+  // Calculate with concentration using Uniswap V3 sqrt price formula
+  const rangePercent = config.position.rangePercent;
+  const priceLower = 1 * (1 - rangePercent / 100);
+  const priceUpper = 1 * (1 + rangePercent / 100);
+  const concentrationFactor = 1 / (Math.sqrt(priceUpper) - Math.sqrt(priceLower));
   const effectiveAPR = baseAPR * concentrationFactor;
 
   // Required capital

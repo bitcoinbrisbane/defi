@@ -1,6 +1,16 @@
 /**
  * Fetch actual on-chain pool data for WBTC/USDC
  * Uses The Graph protocol to get real trading volume and liquidity
+ *
+ * ⚠️ IMPORTANT: The Graph has deprecated their free hosted service.
+ * This script requires an API key from The Graph Studio to work.
+ *
+ * ALTERNATIVES:
+ * - Use fetchPoolDataDirect.js instead (uses DexScreener & Defined.fi APIs)
+ * - Get a free API key from https://thegraph.com/studio/
+ *
+ * If you have an API key, update the endpoint URL below to:
+ * https://gateway.thegraph.com/api/[YOUR-API-KEY]/subgraphs/id/5zvR82QoaXYFyDEKLZ9t6v9adgnptxYpKpSbxtgVENFV
  */
 
 import axios from "axios";
@@ -8,8 +18,10 @@ import { readFileSync } from "fs";
 
 const config = JSON.parse(readFileSync("./config/position.json", "utf8"));
 
-// The Graph endpoints
-const UNISWAP_V3_SUBGRAPH = "https://api.thegraph.com/subgraphs/name/uniswap/uniswap-v3";
+// The Graph endpoints - Requires API key (free from thegraph.com/studio)
+// Replace [YOUR-API-KEY] with your actual API key
+const GRAPH_API_KEY = process.env.GRAPH_API_KEY || "[YOUR-API-KEY]";
+const UNISWAP_V3_SUBGRAPH = `https://gateway.thegraph.com/api/${GRAPH_API_KEY}/subgraphs/id/5zvR82QoaXYFyDEKLZ9t6v9adgnptxYpKpSbxtgVENFV`;
 const UNISWAP_V2_SUBGRAPH = "https://api.thegraph.com/subgraphs/name/uniswap/uniswap-v2";
 
 // WBTC and USDC token addresses
@@ -52,6 +64,25 @@ async function queryUniswapV3Pools() {
 
   try {
     const response = await axios.post(UNISWAP_V3_SUBGRAPH, { query });
+
+    // Check for errors in response
+    if (response.data.errors) {
+      console.error("\n⚠️  The Graph API Error:");
+      console.error(JSON.stringify(response.data.errors, null, 2));
+      console.error("\n💡 This is likely because:");
+      console.error("   1. The Graph deprecated their free hosted service");
+      console.error("   2. You need an API key from https://thegraph.com/studio/");
+      console.error("   3. Set GRAPH_API_KEY environment variable or update the script");
+      console.error("\n🔧 RECOMMENDED: Use 'node scripts/fetchPoolDataDirect.js' instead");
+      console.error("   (uses DexScreener & Defined.fi - no API key needed)\n");
+      return [];
+    }
+
+    if (!response.data || !response.data.data) {
+      console.error("Unexpected response structure:", JSON.stringify(response.data, null, 2));
+      return [];
+    }
+
     return response.data.data.pools;
   } catch (error) {
     console.error("Error querying Uniswap V3:", error.message);
@@ -236,14 +267,18 @@ async function main() {
 
     try {
       const response = await axios.post(UNISWAP_V3_SUBGRAPH, { query: reverseQuery });
-      const reversePools = response.data.data.pools;
 
-      if (reversePools.length > 0) {
-        console.log(`Found ${reversePools.length} pools with reversed token order\n`);
-        pools.push(...reversePools);
+      if (response.data.errors) {
+        // Skip error message for reverse query since we already showed it above
+      } else if (response.data.data && response.data.data.pools) {
+        const reversePools = response.data.data.pools;
+        if (reversePools.length > 0) {
+          console.log(`Found ${reversePools.length} pools with reversed token order\n`);
+          pools.push(...reversePools);
+        }
       }
     } catch (error) {
-      console.error("Error with reverse query:", error.message);
+      // Suppress error for reverse query
     }
   }
 

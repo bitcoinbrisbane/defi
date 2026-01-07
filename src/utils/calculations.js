@@ -17,16 +17,27 @@ export function calculatePriceRange(currentPrice, rangePercent) {
 }
 
 /**
- * Calculate liquidity concentration factor
+ * Calculate liquidity concentration factor using Uniswap V3 sqrt price formula
  * Price range boost vs full-range position
- * @param {number} rangePercent - Range percentage
+ * @param {number} rangePercent - Range percentage (e.g., 15 for ±15%)
  * @returns {number} Concentration multiplier
  */
 export function calculateConcentrationFactor(rangePercent) {
-  // Approximate formula: concentration ≈ 100 / (2 * rangePercent)
-  // For ±15% range: ~3.33x concentration
-  // This is a simplified model; actual boost depends on price distribution
-  return 100 / (2 * rangePercent);
+  // Uniswap V3 uses sqrt price for liquidity concentration
+  // For a range [P_lower, P_upper], the concentration factor is:
+  // 1 / (sqrt(P_upper) - sqrt(P_lower))
+
+  // Normalize current price to 1
+  const currentPrice = 1;
+  const priceLower = currentPrice * (1 - rangePercent / 100);
+  const priceUpper = currentPrice * (1 + rangePercent / 100);
+
+  const sqrtPriceLower = Math.sqrt(priceLower);
+  const sqrtPriceUpper = Math.sqrt(priceUpper);
+
+  // Concentration factor
+  // For ±15% range: ~6.65x (not 3.33x!)
+  return 1 / (sqrtPriceUpper - sqrtPriceLower);
 }
 
 /**
